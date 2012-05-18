@@ -64,8 +64,17 @@ def do_enable
     #TODO: disambiguate between OUR post-commit hook and something else
     exit 1
   end
-  
-  doc = "#!/bin/sh\nlolcommits --capture\n"
+
+  puts "Enable Posting of Images to Twitter? (Y/N)"
+  STDOUT.flush
+  do_twit = STDIN.gets.chomp
+
+  if ((!do_twit.nil?) && (do_twit.length > 0) && (do_twit.downcase == 'y'))
+    doc = "#!/bin/sh\nlolcommits --capture --twitter"
+  else
+    doc = "#!/bin/sh\nlolcommits --capture\n"
+  end
+
   File.open(HOOK_PATH, 'w') {|f| f.write(doc) }
   FileUtils.chmod 0755, HOOK_PATH
   puts "installed lolcommmit hook as:"
@@ -91,14 +100,14 @@ end
 #
 # IF --CAPTURE, DO CAPTURE
 #
-def do_capture
+def do_capture(do_twitter=nil)
   capture_delay = Choice.choices[:delay] || ENV['LOLCOMMITS_DELAY'] || 0
 
   if Choice.choices[:test]
     puts "*** capturing in test mode"
-    Lolcommits.capture(capture_delay, true, Choice.choices[:msg], Choice.choices[:sha])
+    Lolcommits.capture(capture_delay, true, Choice.choices[:msg], Choice.choices[:sha], do_twitter)
   else
-    Lolcommits.capture(capture_delay)
+    Lolcommits.capture(capture_delay, false, nil, nil, do_twitter)
   end
 end
 
@@ -170,6 +179,11 @@ Choice.options do
     cast Integer
     short '-w'
   end
+
+  option :twitter do
+    long "--twitter"
+    desc "upload to twitter"
+   end
 end
 
 #
@@ -177,7 +191,11 @@ end
 #
 if not (Choice.choices[:enable] || Choice.choices[:disable] || Choice.choices[:last] || Choice.choices[:browse])
   if Choice.choices[:capture]
-    do_capture()
+    if Choice.choices["twitter"] && (Choice.choices["twitter"] == true)
+      do_capture(true)
+    else
+      do_capture()
+    end
   else
     do_noargs()
   end

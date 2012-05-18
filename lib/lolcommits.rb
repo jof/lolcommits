@@ -8,7 +8,14 @@ require "git"
 require "RMagick"
 require "open3"
 require "launchy"
+require 'yaml'
+require 'twitter'
+require 'oauth'
 include Magick
+
+TWITTER_CONSUMER_KEY = 'qc096dJJCxIiqDNUqEsqQ'
+TWITTER_CONSUMER_SECRET = 'rvjNdtwSr1H0TvBvjpk6c4bvrNydHmmbvv7gXZQI'
+
 
 module Lolcommits
   $home = ENV['HOME']
@@ -50,7 +57,7 @@ module Lolcommits
     return loldir, commit_sha, commit_msg
   end
 
-  def capture(capture_delay=0, is_test=false, test_msg=nil, test_sha=nil)
+  def capture(capture_delay=0, is_test=false, test_msg=nil, test_sha=nil, do_twitter=nil)
     #
     # Read the git repo information from the current working directory
     #
@@ -163,9 +170,101 @@ module Lolcommits
     canvas.write(File.join loldir, "#{commit_sha}.jpg")
     FileUtils.rm(snapshot_loc)
 
+    # post to twitter!
+    unless do_twitter.nil?
+      post_to_twitter(File.join(loldir,"#{commit_sha}.jpg"), commit_msg, loldir)
+    end
+
     #if in test mode, open image for inspection
     if is_test
       Launchy.open(File.join loldir, "#{commit_sha}.jpg")
+    end
+  end
+
+  def post_to_twitter(file, commit_msg, loldir)
+    # build tweet text
+    available_commit_msg_size = 128 
+    tweet_msg = commit_msg.length > available_commit_msg_size ? "#{commit_msg[0..(available_commit_msg_size-3)]}..." : commit_msg
+    tweet_text = "#{tweet_msg} #lolcommits"
+    puts "Tweeting: #{tweet_text}"
+
+    # if this the first time w/r/t oauth?
+    if !File.exists?(File.join(loldir, "..", ".tw_auth"))
+      initial_twitter_auth(loldir)
+    end
+
+    if File.exists?(File.join(loldir, "..", ".tw_auth"))
+      creds = YAML.load_file(File.join(loldir, "..", ".tw_auth"))
+      Twitter.configure do |config|
+        config.consumer_key = TWITTER_CONSUMER_KEY
+        config.consumer_secret = TWITTER_CONSUMER_SECRET
+      end
+      client = Twitter::Client.new(
+        :oauth_token => creds[:access_token],
+        :oauth_token_secret => creds[:secret]
+      )
+      retries = 2
+      begin
+        if client.update_with_media(tweet_text, File.open(file, 'r'))
+          puts "Tweet Sent!"
+        end
+      rescue Twitter::Error::InternalServerError
+        retries -= 1
+        retry if retries > 0
+        puts "Tweet 500 Error - Tweet Not Posted"
+      end
+    else
+      puts "Tweet Not Sent - No Credentials"
+    end
+  end
+
+  def initial_twitter_auth(loldir)
+    puts "\n--------------------------------------------"
+    puts "Need to grab twitter tokens (first time only)"
+    puts "---------------------------------------------"
+
+    consumer = OAuth::Consumer.new(TWITTER_CONSUMER_KEY, 
+                                   TWITTER_CONSUMER_SECRET,
+                                   :site => 'http://api.twitter.com',
+                                   :request_endpoint => 'http://api.twitter.com',
+                                   :sign_in => true)
+
+    request_token = consumer.get_request_token
+    rtoken  = request_token.token
+    rsecret = request_token.secret
+
+    puts "\n1.) Open the following url in your browser, get the PIN:\n\n"
+    puts request_token.authorize_url
+    puts "\n2.) Enter PIN, then press enter:"
+
+    begin
+      STDOUT.flush
+      twitter_pin = STDIN.gets.chomp
+    rescue
+    end
+
+    if (twitter_pin.nil?) || (twitter_pin.length == 0)
+      puts "\n\tERROR: Could not read PIN, auth fail"
+      return
+    end
+
+    begin
+      OAuth::RequestToken.new(consumer, rtoken, rsecret)
+      access_token = request_token.get_access_token(:oauth_verifier => twitter_pin)
+    rescue Twitter::Unauthorized
+      puts "> FAIL!"
+    end
+
+    creds = {:access_token => access_token.token,
+             :secret => access_token.secret}
+
+    begin
+      f = File.open(File.join(loldir, "..", ".tw_auth"), "w")
+      f.write creds.to_yaml
+      f.close
+    rescue
+      puts "\n\tERROR: could not write credentials to: #{File.join(loldir, "..", ".tw_auth")}"
+      return
     end
   end
 end
