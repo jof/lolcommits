@@ -57,6 +57,14 @@ module Lolcommits
     return loldir, commit_sha, commit_msg
   end
 
+  def github_remotes(dir='.')
+    g = Git.open('.')
+    remotes = g.remotes.map { |remote| URI.parse(remote.url) }
+    github_remotes = remotes.select { |uri| uri.host =~ /\.?github.com$/ }
+
+    return (github_remotes.length > 0 ? github_remotes : nil)
+  end
+
   def capture(capture_delay=0, is_test=false, test_msg=nil, test_sha=nil, do_twitter=nil)
     #
     # Read the git repo information from the current working directory
@@ -182,10 +190,28 @@ module Lolcommits
   end
 
   def post_to_twitter(file, commit_msg, loldir)
+    g = Git.open('.')
+    current_branch = g.branch.name
+    tracked_remote = g.config["branch.#{current_branch}.remote"]
+    if tracked_remote
+      remote = g.remotes.select { |remote| remote.name == tracked_remote }.first.url
+      remote = URI.parse(remote)
+      if github_remotes.include?(remote)
+        github_repo = remote.path.sub(/.git$/, '')
+        commit_sha = parse_git[1]
+        commit_url = 'https://github.com' + github_repo + '/commit/' + commit_sha
+      end
+    end
+
     # build tweet text
     available_commit_msg_size = 128 
     tweet_msg = commit_msg.length > available_commit_msg_size ? "#{commit_msg[0..(available_commit_msg_size-3)]}..." : commit_msg
-    tweet_text = "#{tweet_msg} #lolcommits"
+    tweet_text = ""
+    tweet_text << tweet_msg
+    if commit_url
+      tweet_text << " " + commit_url + " "
+    end
+    tweet_text << " #lolcommits"
     puts "Tweeting: #{tweet_text}"
 
     # if this the first time w/r/t oauth?
